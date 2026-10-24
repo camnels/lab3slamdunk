@@ -6,11 +6,14 @@ output: github_document
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 library(tidyverse)
+library(knitr)
+library(tmap)
+library(sf)
 ```
 
 ## Confidence intervals
 
-**Your name: {Name here}**
+**Your name: Camryn Nelson**
 
 **Overview:**
 
@@ -45,19 +48,41 @@ In the first part of this lab, you'll determine a confidence interval for Washin
 
 ```{r Task1}
 
+#95% confidence 
+z.score_upper=qnorm(0.975)
+z.score_lower=qnorm(0.025)
+
+washington <- era5_data %>%
+  filter(st_name=="Washington") %>%
+  group_by(time_range) %>%
+  summarise(pmean=mean(prcp_m),
+            psd=sd(prcp_m),
+            count=n(),
+            sterror=psd/sqrt(count)) %>%
+  mutate(error=z.score_upper*sterror,
+            cihigh = pmean-error,
+            cilow = pmean+error)
+
+kable(washington)
+
 ```
 
 Using the code provided in class, create a ggplot graphic that visualizes these two confidence intervals. You'll want to use `geom_point` and `geom_linerange` to do so. Use states as the y-axis and mean precipitation as the x axis. Vary the color and position of the dots and lines for the mean/CI by the `time_range` variable. Feel free to also experiment with axis labels/themes to make the graph more appealing and accessible.
 
 **Task 2** _Create a ggplot graphic as described above to show the confidence intervals for precipitation in Washington for each time range._
 
-```{r Task3}
+```{r Task2}
+ggplot(washington) +
+  geom_linerange(aes(xmin=cilow,xmax=cihigh,y=time_range,group=time_range)) +
+  geom_point(aes(x=pmean,y=time_range, color=time_range, shape=time_range),size=5) +
+  labs(title="Precipitation (m) Confidence Intervals - Washington") +
+  theme_minimal()
 
 ```
 
 **Task 3** _Interpret your table and graph. What do they tell us about the change in Washington's precipitation during this time?_
 
-{Your response here.}
+There has been less precipitation in this time period, on average, compared to 1950-69. We can say this with 95% confidence because the confidence intervals of the two time periods do not overlap!
 
 # Part 2: Analyzing county data in Washington.
 In part 1, you ran a state level analysis. What if you wanted to identify where populations might be negatively affected by precipitation changes within a state? In this section, you'll look at the changes in precipitation **at county level** in Washington to 
@@ -66,24 +91,69 @@ To start with, adapt your code from step 1 so that you create confidence interva
 
 **Task 4** _Create a summary table for January precipitation in Washington counties for both time periods. Use the same approach as in Task 1, but calculate statistics for counties rather than the state as a whole. Call the head of your table with `kable` when you are done._
 
-```{r Task5}
+```{r Task4}
+
+washington_cty <- era5_data %>%
+  filter(st_name=="Washington") %>%
+  group_by(time_range, cty_name) %>%
+  summarise(pmean=mean(prcp_m),
+            psd=sd(prcp_m),
+            count=n(),
+            sterror=psd/sqrt(count)) %>%
+  mutate(error=z.score_lower*sterror,
+            cihigh = pmean-error,
+            cilow = pmean+error)
+
+kable(head(washington_cty))
 
 ```
 
 **Task 5** _Visualize the confidence intervals for the county-level data you generated in task 4, using the same style as you did for Task 2 above. For an optional extra challenge, visually highlight the counties where the confidence intervals between time periods do NOT overlap._
 
-```{r Task6}
+```{r Task5}
+overlap <- washington_cty %>%
+  group_by(cty_name) %>%
+  summarise(not = cihigh[time_range=="1950-69"] <
+                  cilow[time_range=="2005-24"]) 
+
+washington_cty_plot <- washington_cty %>%
+  left_join(overlap, by = "cty_name") %>%
+  separate(cty_name,into=c("name","state"),sep=" County, ") %>%
+  mutate(name = reorder(name, -pmean))
+
+ggplot(washington_cty_plot) +
+  geom_linerange(aes(xmin=cilow,xmax=cihigh,y=name,color=time_range)) +
+  geom_point(aes(x=pmean,y=name, color=not,shape=time_range),size=5, alpha=0.5) +
+  labs(title="Precipitation (m) Confidence Intervals - Washington Counties") +
+  scale_x_continuous(limits=c(0,0.6))+
+  theme_minimal()
 
 ```
 
 **Task 6**: _Compare the size of the error terms for your county level data to the error terms at state level that you calculated in Task 1. Are they bigger or smaller? Explain why the formula you used for calculating the error terms produced error terms of different sizes. How is this difference visible in your ggplot graphs?_
 
-{Your response here.}
+Error terms are calculated by dividing by the square root of the sample size, so error will decrease with higher sample size. The county sample size (20) has greater error because it has a smaller sample than statewide (780). You can see it in the graphs as the confidence intervals; the statewide intervals are narrower than the countywide ones.
 
 **Task 7**: _Transform the county data from task 4 into wide format so that the means for each time period are in the same row for each county. Then calculate the change in precipitation between the time periods. Join this table to the geopackage file that contains county boundaries and census data, making sure that you only have Washington counties included - use the geopackage `data/acsdata_cty_westreg.gpkg`. Then use `tmap` to map out the difference in precipitation means across the two time periods. Make sure the legend of this map is interpretable._
 
 ```{r Task7}
 
+gpkg = read_sf("data/acsdata_cty_westreg.gpkg")
+
+washington_cty_wide <- washington_cty %>%
+  select(cty_name, time_range, pmean) %>%
+  pivot_wider(names_from=time_range,values_from=pmean) %>%
+  mutate(deltap = `2005-24` - `1950-69`) 
+
+bigdata <- gpkg %>%
+  filter(st_name=="Washington") %>%
+  left_join(washington_cty_wide, by="cty_name")
+
+tm_shape(bigdata) +
+  tm_polygons("deltap",
+      fill.scale=tm_scale_continuous(),
+      fill.legend=tm_legend(title="Mean Precipitation Change, 1950-64 to 2005-24")) 
+  
 ```
 
 
@@ -126,8 +196,8 @@ In addition, describe two interesting trends you see in the figure you created.
 
 **Disclosure of assistance:** Besides class materials, what other sources of assistance did you use while completing this lab? These can include input from classmates, relevant material identified through web searches (e.g., Stack Overflow), or assistance from ChatGPT or other AI tools. How did these sources support your own learning in completing this lab?
 
-{Response here.}
+I used the ?function and the Google AI overview for how to use tmap since I forgot. They were helpful and I am now able to just use them to remind me of things I know but need the syntax for. 
 
 **Lab reflection:** How do you feel about the work you did on this lab? Was it easy, moderate, or hard? What are the biggest things you learned by completing it?
 
-{Your response here}
+It was good, I think this one was easier. I learned how to identify a problem in the code and dig through to find the problem and fix it (e.g. my confidence intervals being calculated backwards)
